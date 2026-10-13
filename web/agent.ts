@@ -91,10 +91,17 @@ async function fallbackChat(message: string, onEvent: (e: TraceEvent) => void): 
     };
 
     let text: string;
-    if (/\b(hi|hello|hey|good morning|good afternoon| good evening|namaste|namaskaram)\b/.test(m)) {
+    if (/\b(hi|hello|hey|good morning|good afternoon|good evening|namaste|namaskaram)\b/.test(m)) {
       await run("get_today_brief");
-      const sum = await run("get_care_summary", { days: 7 });
-      text = `Good morning, Meera. It's lovely to hear your voice. Here's how things look: ${sum} Now then - how did you sleep, and how are you feeling this morning?`;
+      const r = await client.callTool({ name: "get_today_brief", arguments: {} });
+      const brief = (r as any).structuredContent ?? {};
+      const meds = (brief.medications ?? []) as any[];
+      const due = meds.filter((x) => (x.logged ?? []).length < (x.times ?? []).length);
+      const medPart = due.length
+        ? `Your tablets today: ${due.map((x) => `${x.name} at ${x.times.join(" and ")}`).join(", ")}.`
+        : "All of today's tablets are already done. Lovely.";
+      const ciPart = brief.checkIn?.completed ? "You've already checked in today." : "We have our little check-in to do.";
+      text = `Good morning, Meera. It's lovely to hear your voice. ${ciPart} ${medPart} Now then, how did you sleep?`;
     } else if (/(took|taken|had)\b.*(tablet|medicine|pill|amlodipine|metformin|shelcal|dose)/.test(m)) {
       const which = m.includes("metformin") ? "metformin" : m.includes("shelcal") ? "shelcal" : m.includes("amlodipine") ? "amlodipine" : "amlodipine";
       await run("log_medication_taken", { medication: which, status: "taken" });

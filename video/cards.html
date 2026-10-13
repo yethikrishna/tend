@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; width:1280px; height:720px; background:#f6f2ea; color:#24211b; font-family:Inter,sans-serif; display:flex; flex-direction:column; justify-content:center; align-items:center; }
+  .serif { font-family:Fraunces, Georgia, serif; }
+  .big { font-size:120px; font-weight:600; }
+  .dot { color:#4a7c59; }
+  .sub { font-size:26px; color:#6b6459; margin-top:18px; }
+  .tiny { font-size:16px; color:#6b6459; margin-top:56px; letter-spacing:0.08em; }
+  .q { font-size:44px; font-weight:400; margin:14px 0; color:#24211b; }
+  .q.dim { color:#a39a89; }
+  .mono { font-family:ui-monospace,Menlo,monospace; font-size:22px; color:#4a7c59; }
+  .spec { text-align:left; font-size:30px; line-height:2.0; }
+  .spec b { font-weight:600; }
+  .rule { width:60px; height:2px; background:#c05621; margin:26px 0; }
+</style></head><body id="b"></body>
+<script>
+const q = new URLSearchParams(location.search);
+const kind = q.get('c');
+const b = document.getElementById('b');
+if (kind === 'title') {
+  b.innerHTML = `<div class="serif big">Tend<span class="dot">.</span></div>
+    <div class="sub">A care companion for aging parents</div>
+    <div class="tiny">AN ALEXA+ EXPERIENCE &nbsp;·&nbsp; BUILT ON THE MODEL CONTEXT PROTOCOL</div>`;
+} else if (kind === 'problem') {
+  b.innerHTML = `<div class="serif q dim">Did she take her tablets?</div>
+    <div class="serif q dim">Did she sleep?</div>
+    <div class="serif q">Is today just a quiet day... or the start of something?</div>`;
+} else if (kind === 'arch') {
+  b.innerHTML = `<div class="spec serif">
+    <div><b>One MCP server</b> &nbsp; self-hosted, spec 2025-11-25</div>
+    <div><b>Streamable HTTP</b> &nbsp; one endpoint, plain JSON-RPC</div>
+    <div><b>Ten tools</b> &nbsp; check-ins · medications · rhythm · alerts</div>
+    <div><b>Care logic you can read</b> &nbsp; rules, not a black box</div>
+  </div>`;
+} else if (kind === 'close') {
+  b.innerHTML = `<div class="serif big">Tend<span class="dot">.</span></div>
+    <div class="sub">Because the people who took care of us<br>deserve technology that takes care of them.</div>
+    <div class="tiny">github.com/yethikrishna/tend</div>`;
+}
+</script></html>
