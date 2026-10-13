@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tend  -  Family dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div><span class="brand">Tend<span class="dot">.</span></span> <span class="tag">family dashboard</span></div>
+  <nav>
+    <a href="/">Conversation</a>
+    <a href="/dashboard.html" class="on">Family dashboard</a>
+  </nav>
+</header>
+
+<main class="dash">
+  <h1>Meera's week</h1>
+  <div class="sub"><span class="live-dot"></span>Live  -  updates the moment Tend hears from her · <span id="today"></span></div>
+
+  <div class="grid">
+    <section class="card span4">
+      <h2>Today's check-in</h2>
+      <div id="checkin"></div>
+    </section>
+
+    <section class="card span8">
+      <h2>Medications  -  7-day adherence</h2>
+      <div id="meds"></div>
+    </section>
+
+    <section class="card span7">
+      <h2>Daily rhythm</h2>
+      <div id="rhythm"></div>
+      <div class="legend"><span> -  wake time</span><span>▮ activities per day</span></div>
+    </section>
+
+    <section class="card span5">
+      <h2>Alerts &amp; notes</h2>
+      <div id="alerts"></div>
+    </section>
+
+    <section class="card span12">
+      <h2>Recent activity</h2>
+      <div class="tl" id="timeline"></div>
+    </section>
+  </div>
+
+  <div class="footer">Tend  -  built on the Model Context Protocol (spec 2025-11-25, Streamable HTTP)</div>
+</main>
+
+<script src="dash.js"></script>
+</body>
+</html>
