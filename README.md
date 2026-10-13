@@ -9,6 +9,14 @@ Tend turns Alexa+ into a gentle daily companion for that parent. It calls each m
 > Built for the **Build, Ship, Shape: Amazon Developer Hackathon** (Alexa+ track).
 > The MCP server implements **MCP spec 2025-11-25** over **Streamable HTTP**.
 
+## Demo
+
+**Video:** [Tend - an Alexa+ care companion (2:53)](https://www.youtube.com/watch?v=I1KtKPeKMrQ)
+
+| Conversation (simulated Alexa+) | Family dashboard |
+| --- | --- |
+| ![Conversation](docs/screenshots/conversation.png) | ![Dashboard](docs/screenshots/dashboard.png) |
+
 ## The experience
 
 **For the parent** - a voice conversation, nothing to learn:
