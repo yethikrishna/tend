@@ -3,6 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { db, nowLocal, todayDate } from "./db.js";
 import { adherenceFor, computeBaseline, evaluateAnomalies, weeklySummary } from "./logic.js";
 
+import { TIME_PATTERN, validDay, logDose, setMedicationSchedule, dueSlots } from "./doses.js";
+
 type Text = { type: "text"; text: string };
 const reply = (text: string, data?: unknown) => ({
   content: [{ type: "text", text } as Text],
@@ -19,9 +21,10 @@ export function registerTendTools(server: McpServer) {
     const checkIn = db.prepare(`SELECT * FROM check_ins WHERE date(scheduled_for) = ? ORDER BY scheduled_for LIMIT 1`).get(today) as any;
     const meds = (db.prepare(`SELECT * FROM medications WHERE active = 1`).all() as any[]).map((m) => {
       const times = JSON.parse(m.times) as string[];
-      const logs = db.prepare(`SELECT status FROM med_logs WHERE medication_id = ? AND date(scheduled_for) = ?`).all(m.id, today) as any[];
+      const slots = dueSlots(m.id,1);
+      const logs = (db.prepare(`SELECT status,dose_key FROM med_logs WHERE medication_id = ? AND date(scheduled_for) = ? AND dose_key IS NOT NULL`).all(m.id, today) as any[]).filter(l => slots.includes(l.dose_key));
       const a = adherenceFor(m.id, 7);
-      return { name: m.name, dosage: m.dosage, times, logged: logs.map((l) => l.status), adherence7d: a.pct };
+      return { name: m.name, dosage: m.dosage, times, logged: logs.map((l) => l.status), due: slots.length, unreported: slots.length-logs.length, adherence7d: a.pct };
     });
     const alerts = db.prepare(`SELECT id, level, title, created_at FROM alerts WHERE acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 5`).all();
     const data = {
@@ -41,8 +44,8 @@ export function registerTendTools(server: McpServer) {
 
   server.registerTool("schedule_check_in", {
     title: "Schedule a check-in",
-    description: "Schedule a daily voice check-in for the parent at a local time (HH:MM), optionally on a specific date (YYYY-MM-DD, default today).",
-    inputSchema: { time: z.string().regex(/^\d{2}:\d{2}$/).describe("Local time, 24h, e.g. 09:30"), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
+    description: "Store a check-in time (does not place calls or run a scheduler) for the parent at a local time (HH:MM), optionally on a specific date (YYYY-MM-DD, default today).",
+    inputSchema: { time: z.string().regex(TIME_PATTERN).describe("Local time, 24h, e.g. 09:30"), date: z.string().refine(validDay, "Invalid calendar date").optional() },
   }, ({ time, date }) => {
     const day = date ?? todayDate();
     const scheduledFor = `${day} ${time}:00`;
@@ -57,7 +60,7 @@ export function registerTendTools(server: McpServer) {
 
   server.registerTool("log_check_in", {
     title: "Log a completed check-in",
-    description: "Record the outcome of a voice check-in conversation: mood, sleep quality, free-text notes, and a one-line conversation summary. Also evaluates wellbeing signals and alerts family if something looks off.",
+    description: "Record the outcome of a simulated check-in conversation: mood, sleep quality, free-text notes, and a one-line conversation summary. Also evaluates wellbeing signals and alerts family if something looks off.",
     inputSchema: {
       mood: z.enum(["great", "good", "okay", "low", "unwell"]),
       sleep_quality: z.enum(["restful", "fair", "poor"]).optional(),
@@ -86,41 +89,39 @@ export function registerTendTools(server: McpServer) {
   server.registerTool("add_medication", {
     title: "Add a medication",
     description: "Register a medication with dosage and daily dose times (local HH:MM list).",
-    inputSchema: { name: z.string(), dosage: z.string().describe('e.g. "5mg"'), times: z.array(z.string().regex(/^\d{2}:\d{2}$/)).min(1) },
+    inputSchema: { name: z.string(), dosage: z.string().describe('e.g. "5mg"'), times: z.array(z.string().regex(TIME_PATTERN)).min(1).refine(times => new Set(times).size === times.length, "Duplicate dose times") },
   }, ({ name, dosage, times }) => {
     const r = db.prepare(`INSERT INTO medications (name, dosage, times) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET dosage=excluded.dosage, times=excluded.times, active=1`).run(name, dosage, JSON.stringify(times));
-    return reply(`${name} ${dosage} added, ${times.length} dose(s) daily at ${times.join(", ")}.`, { id: r.lastInsertRowid, name, dosage, times });
+    const med = db.prepare('SELECT id FROM medications WHERE name=?').get(name) as {id:number};
+    setMedicationSchedule(med.id,times);
+    return reply(`${name} ${dosage} added, ${times.length} dose(s) daily at ${times.join(", ")}.`, { id: med.id, name, dosage, times });
   });
 
   server.registerTool("log_medication_taken", {
     title: "Log a medication dose",
-    description: "Record that a dose was taken, missed, or skipped. Matches medication by name (case-insensitive, partial ok).",
+    description: "Report a scheduled dose as taken, missed, or skipped. For multiple daily doses, scheduled_for is required. Repeating the same slot/status is safe; conflicting status is refused. Names must match one active medication.",
     inputSchema: {
-      medication: z.string().describe("Medication name or part of it"),
+      scheduled_for: z.string().optional().describe("Exact local dose date/time YYYY-MM-DD HH:MM. Required for multiple doses daily or past doses."),
+      medication: z.string().min(1).describe("Medication name or part of it"),
       status: z.enum(["taken", "missed", "skipped"]),
       note: z.string().optional(),
     },
-  }, ({ medication, status, note }) => {
-    const med = db.prepare(`SELECT * FROM medications WHERE active = 1 AND lower(name) LIKE lower(?) ORDER BY length(name) LIMIT 1`).get(`%${medication}%`) as any;
-    if (!med) return reply(`I couldn't find an active medication matching "${medication}".`, { error: "not_found", medication });
-    db.prepare(`INSERT INTO med_logs (medication_id, scheduled_for, status, note) VALUES (?, ?, ?, ?)`).run(med.id, nowLocal(), status, note ?? null);
-    if (status === "taken") db.prepare(`INSERT INTO rhythm_events (kind, note) VALUES ('other', ?)`).run(`Took ${med.name}`);
-    const findings = evaluateAnomalies();
-    const text = status === "taken"
-      ? `Logged: ${med.name} ${med.dosage} taken.`
-      : `Logged: ${med.name} ${status}. ${findings.length ? findings.join("; ") + "." : ""}`;
-    return reply(text, { medication: med.name, status, anomalyFindings: findings });
+  }, ({ medication, status, note, scheduled_for }) => {
+    const result = logDose(medication,status,note,scheduled_for);
+    if (result.error) return reply(`Dose not logged: ${result.error}. Please identify the exact scheduled dose; no record was changed.`,result);
+    const findings = result.duplicate ? [] : evaluateAnomalies();
+    return reply(`${result.duplicate ? "Already recorded" : "Logged"}: ${result.medication} ${status}, scheduled ${result.scheduledFor}.`,{...result,anomalyFindings:findings});
   });
 
   server.registerTool("get_adherence", {
     title: "Medication adherence report",
-    description: "Adherence percentages per medication over the last N days (default 7), with taken/missed/skipped counts.",
+    description: "Reported taken / tracked scheduled doses due over N calendar days through now. Unreported is unknown, not inferred missed. Before recorded schedule history, coverage is unknown.",
     inputSchema: { days: z.number().int().min(1).max(90).optional() },
   }, ({ days }) => {
     const d = days ?? 7;
     const meds = (db.prepare(`SELECT * FROM medications WHERE active = 1`).all() as any[]).map((m) => ({ name: m.name, dosage: m.dosage, ...adherenceFor(m.id, d) }));
     const text = meds.length
-      ? `Adherence, last ${d} days: ` + meds.map((m) => `${m.name} ${m.pct ?? "n/a"}% (${m.taken}/${m.total})`).join("; ") + "."
+      ? `Adherence, last ${d} days: ` + meds.map((m) => `${m.name} ${m.pct ?? "n/a"}% (${m.taken}/${m.total} tracked doses due; ${m.unreported} unreported)`).join("; ") + "."
       : "No active medications to report on.";
     return reply(text, { days: d, medications: meds });
   });
