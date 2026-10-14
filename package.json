@@ -8,7 +8,7 @@
     "mcp": "tsx server/index.ts",
     "web": "tsx web/index.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "demo": "tsx scripts/demo.ts"
+    "test": "tsx --test scripts/regression.test.ts"
   },
   "keywords": [],
   "author": "Yethikrishna R (https://github.com/yethikrishna)",
