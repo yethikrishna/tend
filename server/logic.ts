@@ -1,4 +1,5 @@
 import { db, nowLocal, todayDate } from "./db.js";
+import { dueSlots } from "./doses.js";
 
 /** Deterministic, explainable care logic. No ML - rules a family can read and trust. */
 
@@ -33,18 +34,16 @@ export function computeBaseline(days = 14): RhythmBaseline {
   };
 }
 
-export function adherenceFor(medicationId: number, days = 7) {
-  const rows = db.prepare(`
-    SELECT status, COUNT(*) as n FROM med_logs
-    WHERE medication_id = ? AND date(scheduled_for) >= date('now', 'localtime', ?)
-    GROUP BY status
-  `).all(medicationId, `-${days} days`) as { status: string; n: number }[];
-  const byStatus = Object.fromEntries(rows.map((r) => [r.status, r.n]));
-  const taken = byStatus["taken"] ?? 0;
-  const missed = byStatus["missed"] ?? 0;
-  const skipped = byStatus["skipped"] ?? 0;
-  const total = taken + missed + skipped;
-  return { taken, missed, skipped, total, pct: total ? Math.round((taken / total) * 100) : null };
+export function adherenceFor(medicationId: number, days = 7, at = nowLocal()) {
+  const expected = dueSlots(medicationId, days, at);
+  const logs = db.prepare('SELECT dose_key,status FROM med_logs WHERE medication_id=? AND dose_key IS NOT NULL').all(medicationId) as {dose_key:string,status:string}[];
+  const statuses = new Map(logs.map(r => [r.dose_key,r.status]));
+  const count = (status:string) => expected.filter(slot => statuses.get(slot) === status).length;
+  const taken=count('taken'), missed=count('missed'), skipped=count('skipped');
+  const total=expected.length, unreported=total-taken-missed-skipped;
+  const tracked = db.prepare('SELECT MIN(effective_from) trackedFrom FROM medication_schedules WHERE medication_id=?').get(medicationId) as {trackedFrom:string|null};
+  const legacy = db.prepare('SELECT COUNT(*) n FROM med_logs WHERE medication_id=? AND dose_key IS NULL').get(medicationId) as {n:number};
+  return {taken,missed,skipped,unreported,total,pct:total ? Math.round(taken/total*100) : null,trackedFrom:tracked.trackedFrom,legacyUnmappedLogs:legacy.n};
 }
 
 /** Evaluate today's signals against the baseline; create alerts when something is meaningfully off. */
@@ -58,36 +57,32 @@ export function evaluateAnomalies(): string[] {
     ORDER BY happened_at LIMIT 1
   `).get(today) as { happened_at: string } | undefined;
 
-  const recentAttention = db.prepare(`
-    SELECT COUNT(*) as n FROM alerts WHERE level IN ('attention','urgent') AND date(created_at) = ?
-  `).get(today) as { n: number };
-
-  const raise = (level: string, title: string, body: string) => {
-    db.prepare(`INSERT INTO alerts (level, title, body) VALUES (?, ?, ?)`).run(level, title, body);
-    findings.push(title);
+  const raise = (level: string, title: string, body: string, signal: string) => {
+    const result = db.prepare(`INSERT OR IGNORE INTO alerts (level,title,body,signal_key) VALUES (?,?,?,?)`).run(level,title,body,`${today}:${signal}`);
+    if (result.changes) findings.push(title);
   };
 
-  if (base.avgWakeMinutes !== null && wakeToday && recentAttention.n === 0) {
+  if (base.avgWakeMinutes !== null && wakeToday) {
     const t = wakeToday.happened_at.slice(11, 16).split(":");
     const mins = parseInt(t[0]) * 60 + parseInt(t[1]);
     if (mins - base.avgWakeMinutes > 90) {
-      raise("attention", "Woke much later than usual", `Wake time was ${wakeToday.happened_at.slice(11, 16)}, over 90 minutes past the 14-day average.`);
+      raise("attention", "Woke much later than usual", `Wake time was ${wakeToday.happened_at.slice(11, 16)}, over 90 minutes past the 14-day average.`, "late-wake");
     }
   }
 
   const lowMoods = db.prepare(`
-    SELECT COUNT(*) as n FROM check_ins
+    SELECT COUNT(DISTINCT date(completed_at)) as n FROM check_ins
     WHERE mood IN ('low','unwell') AND date(completed_at) >= date('now', 'localtime', '-2 days')
   `).get() as { n: number };
-  if (lowMoods.n >= 2 && recentAttention.n === 0) {
-    raise("attention", "Low mood reported twice this week", "Two recent check-ins reported feeling low or unwell. A call today would mean a lot.");
+  if (lowMoods.n >= 2) {
+    raise("attention", "Low mood on two recent days", "Two recent check-ins reported feeling low or unwell. A call today would mean a lot.", "low-mood");
   }
 
   const missesToday = db.prepare(`
-    SELECT COUNT(*) as n FROM med_logs WHERE status = 'missed' AND date(scheduled_for) = ?
+    SELECT COUNT(DISTINCT CAST(medication_id AS TEXT) || ':' || dose_key) as n FROM med_logs WHERE status = 'missed' AND dose_key IS NOT NULL AND date(scheduled_for) = ?
   `).get(today) as { n: number };
   if (missesToday.n >= 2) {
-    raise("urgent", "Multiple doses missed today", `${missesToday.n} medication doses were missed today. Please check in directly.`);
+    raise("urgent", "Multiple doses missed today", `${missesToday.n} medication doses were missed today. Please check in directly.`, "multiple-misses");
   }
 
   return findings;
@@ -98,7 +93,7 @@ export function weeklySummary(days = 7): string {
   const lines: string[] = [];
   for (const m of meds) {
     const a = adherenceFor(m.id, days);
-    if (a.pct !== null) lines.push(`${m.name} ${m.dosage}: ${a.pct}% adherence (${a.taken}/${a.total} doses)`);
+    if (a.pct !== null) lines.push(`${m.name} ${m.dosage}: ${a.pct}% adherence (${a.taken}/${a.total} tracked doses due; ${a.unreported} unreported)`);
   }
   const ci = db.prepare(`
     SELECT COUNT(*) as n, GROUP_CONCAT(DISTINCT mood) as moods FROM check_ins
