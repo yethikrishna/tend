@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { db, todayDate } from "../server/db.js";
+import { dueSlots } from "../server/doses.js";
 import { adherenceFor, computeBaseline } from "../server/logic.js";
 import { chat, type TraceEvent } from "./agent.js";
 
@@ -27,8 +28,8 @@ function dashboardData() {
   const today = todayDate();
   const checkIn = db.prepare(`SELECT * FROM check_ins WHERE date(scheduled_for) = ? ORDER BY scheduled_for LIMIT 1`).get(today);
   const meds = (db.prepare(`SELECT * FROM medications WHERE active = 1`).all() as any[]).map((m) => {
-    const logs = db.prepare(`SELECT status, scheduled_for FROM med_logs WHERE medication_id = ? AND date(scheduled_for) = ? ORDER BY scheduled_for`).all(m.id, today) as any[];
-    return { id: m.id, name: m.name, dosage: m.dosage, times: JSON.parse(m.times), todayLogs: logs.map((l) => l.status), adherence7d: adherenceFor(m.id, 7) };
+    const logs = db.prepare(`SELECT status, scheduled_for, dose_key FROM med_logs WHERE medication_id = ? AND date(scheduled_for) = ? ORDER BY scheduled_for`).all(m.id, today) as any[];
+    return { id: m.id, name: m.name, dosage: m.dosage, times: JSON.parse(m.times), todayLogs: JSON.parse(m.times).map((time:string) => logs.find(l => l.dose_key === `${today} ${time}:00`)?.status ?? (dueSlots(m.id,1).includes(`${today} ${time}:00`) ? "unreported" : "future")), adherence7d: adherenceFor(m.id, 7) };
   });
   const alerts = db.prepare(`SELECT * FROM alerts ORDER BY created_at DESC, id DESC LIMIT 20`).all();
   const wakeRows = db.prepare(`
@@ -62,4 +63,4 @@ app.get("/api/events", (req, res) => {
   req.on("close", () => clearInterval(timer));
 });
 
-app.listen(PORT, () => console.log(`tend web on http://127.0.0.1:${PORT} (sim at /, family dashboard at /dashboard.html)`));
+app.listen(PORT, "127.0.0.1", () => console.log(`tend web on http://127.0.0.1:${PORT} (sim at /, family dashboard at /dashboard.html)`));
