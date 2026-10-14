@@ -1,35 +1,33 @@
-/** End-to-end check: connects as a real MCP client over Streamable HTTP and exercises every tool. */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
-const url = new URL(process.env.TEND_MCP_URL ?? "http://127.0.0.1:7701/mcp");
-const client = new Client({ name: "tend-smoke", version: "0.1.0" });
-await client.connect(new StreamableHTTPClientTransport(url));
-
-const version = (client as any).getServerVersion?.() ?? {};
-const negotiated = (client as any)._transport?._protocolVersion ?? (client as any).getProtocolVersion?.();
-console.log("connected:", JSON.stringify(version), "protocol:", negotiated ?? "(see initialize)");
-
-const tools = await client.listTools();
-console.log("tools:", tools.tools.map((t) => t.name).join(", "));
-
-const call = async (name: string, args: Record<string, unknown> = {}) => {
-  const r = await client.callTool({ name, arguments: args });
-  const text = (r.content as any[])?.map((c) => c.text).join(" ") ?? "";
-  console.log(`\n> ${name} ${JSON.stringify(args)}\n  ${text.slice(0, 220)}`);
-  return r;
-};
-
-await call("get_today_brief");
-await call("schedule_check_in", { time: "09:30" });
-await call("log_check_in", { mood: "good", sleep_quality: "restful", notes: "Watered the garden.", conversation_summary: "Morning chat: cheerful, knee still a bit stiff." });
-await call("log_medication_taken", { medication: "amlodipine", status: "taken" });
-await call("log_medication_taken", { medication: "metformin", status: "missed", note: "Forgot the morning dose" });
-await call("record_rhythm_event", { kind: "walk", note: "20 minutes around the temple pond" });
-await call("get_adherence", { days: 7 });
-await call("get_rhythm_summary", { days: 7 });
-await call("notify_family", { level: "info", title: "Morning check-in complete", message: "Meera sounded cheerful; knee still stiff on stairs." });
-await call("get_care_summary", { days: 7 });
-
-await client.close();
-console.log("\nsmoke OK");
+/** Assertion-based transport check. Only run against an isolated seeded demo DB: mutates demo records. */
+import assert from 'node:assert/strict';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+const client=new Client({name:'tend-smoke',version:'0.2.0'});
+await client.connect(new StreamableHTTPClientTransport(new URL(process.env.TEND_MCP_URL ?? 'http://127.0.0.1:7701/mcp')));
+try {
+ const tools=await client.listTools();assert.equal(tools.tools.length,10);
+ const call=async(name:string,args:Record<string,unknown>={})=>{
+  const r=await client.callTool({name,arguments:args});assert.ok(!r.isError,`${name}: MCP error`);
+  const data=r.structuredContent as Record<string,any>;assert.ok(data && !data.error,`${name}: ${JSON.stringify(data)}`);return data;
+ };
+ const brief=await call('get_today_brief');assert.ok(brief.date);
+ await call('schedule_check_in',{time:'09:30'});
+ const check=await call('log_check_in',{mood:'good',sleep_quality:'restful',notes:'Synthetic transport test'});assert.equal(check.mood,'good');
+ // Explicit past slot removes dependence on the current hour, and reruns are idempotent.
+ const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+ const date=`${yesterday.getFullYear()}-${String(yesterday.getMonth()+1).padStart(2,'0')}-${String(yesterday.getDate()).padStart(2,'0')}`;
+ await call('add_medication',{name:'SmokeDose',dosage:'synthetic only',times:['00:00']});
+ // A newly registered medication has no fabricated past history.
+ const unknown=await client.callTool({name:'log_medication_taken',arguments:{medication:'SmokeDose',status:'taken',scheduled_for:`${date} 00:00`}});
+ assert.equal((unknown.structuredContent as any).error,'untracked_dose_slot');
+ const doseReply=await client.callTool({name:'log_medication_taken',arguments:{medication:'Amlodipine',status:'taken',scheduled_for:`${date} 08:00`}});
+ assert.ok(!doseReply.isError);
+ const dose=doseReply.structuredContent as any;
+ if(dose.error) assert.equal(dose.error,'dose_status_conflict');else assert.equal(dose.status,'taken');
+ const rhythm=await call('record_rhythm_event',{kind:'walk',note:'Synthetic transport test'});assert.equal(rhythm.kind,'walk');
+ const adherence=await call('get_adherence',{days:7});assert.ok(adherence.medications.length>=3);for(const m of adherence.medications)assert.equal(m.total,m.taken+m.missed+m.skipped+m.unreported);
+ const summary=await call('get_rhythm_summary',{days:7});assert.ok(summary.baseline.daysObserved>0);
+ const notification=await call('notify_family',{level:'info',title:'Synthetic smoke test',message:'Demo data only'});assert.ok(notification.id);
+ const care=await call('get_care_summary',{days:7});assert.ok(typeof care.summary==='string' && care.summary.length>0);
+ console.log('smoke assertions OK: all 10 tools, refusal path, transport');
+} finally {await client.close();}
