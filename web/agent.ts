@@ -22,6 +22,8 @@ async function withMcp<T>(fn: (c: Client) => Promise<T>): Promise<T> {
 
 async function callTool(client: Client, name: string, args: Record<string, unknown>): Promise<string> {
   const r = await client.callTool({ name, arguments: args });
+  const data = r.structuredContent as Record<string,unknown> | undefined;
+  if (r.isError || data?.error) return `No change was made: ${data?.error ?? "tool error"}. Ask for the exact medication and scheduled dose date/time. Do not say a dose was logged.`;
   return (r.content as any[])?.map((c) => c.text).join(" ") ?? "";
 }
 
@@ -96,19 +98,23 @@ async function fallbackChat(message: string, onEvent: (e: TraceEvent) => void): 
       const r = await client.callTool({ name: "get_today_brief", arguments: {} });
       const brief = (r as any).structuredContent ?? {};
       const meds = (brief.medications ?? []) as any[];
-      const due = meds.filter((x) => (x.logged ?? []).length < (x.times ?? []).length);
+      const due = meds.filter((x) => x.unreported > 0);
       const medPart = due.length
         ? `Your tablets today: ${due.map((x) => `${x.name} at ${x.times.join(" and ")}`).join(", ")}.`
-        : "All of today's tablets are already done. Lovely.";
+        : "No due tablets are awaiting a report. Future doses may still be scheduled.";
       const ciPart = brief.checkIn?.completed ? "You've already checked in today." : "We have our little check-in to do.";
       text = `Good morning, Meera. It's lovely to hear your voice. ${ciPart} ${medPart} Now then, how did you sleep?`;
     } else if (/(took|taken|had)\b.*(tablet|medicine|pill|amlodipine|metformin|shelcal|dose)/.test(m)) {
+      if (!/(amlodipine|metformin|shelcal)/.test(m) || /(yesterday|last night|last evening)/.test(m)) return "I haven't changed any dose record. Please use a named medication and exact scheduled date/time through the MCP tool for a past dose. This offline conversation cannot safely choose that dose.";
       const which = m.includes("metformin") ? "metformin" : m.includes("shelcal") ? "shelcal" : m.includes("amlodipine") ? "amlodipine" : "amlodipine";
-      await run("log_medication_taken", { medication: which, status: "taken" });
+      const result = await run("log_medication_taken", { medication: which, status: "taken" });
+      if (result.startsWith("No change was made:")) return result;
       text = `Well done, I've noted your ${which} for today. One less thing to think about.`;
     } else if (/(forgot|missed|skipped)\b.*(tablet|medicine|pill|dose|metformin|amlodipine|shelcal)/.test(m)) {
+      if (!/(amlodipine|metformin|shelcal)/.test(m) || /(yesterday|last night|last evening)/.test(m)) return "I haven't changed any dose record. Please use a named medication and exact scheduled date/time through the MCP tool for a past dose. This offline conversation cannot safely choose that dose.";
       const which = m.includes("metformin") ? "metformin" : m.includes("shelcal") ? "shelcal" : "amlodipine";
-      await run("log_medication_taken", { medication: which, status: "missed", note: "Mentioned in conversation" });
+      const result = await run("log_medication_taken", { medication: which, status: "missed", note: "Mentioned in conversation" });
+      if (result.startsWith("No change was made:")) return result;
       text = `That's alright, it happens to everyone. I've noted the missed ${which}. If it keeps slipping, I'll gently let the family know so they can help you stay on track.`;
     } else if (/(walk|garden|temple|out)/.test(m)) {
       await run("record_rhythm_event", { kind: "walk", note: message.slice(0, 80) });
