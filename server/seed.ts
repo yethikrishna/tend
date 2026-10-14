@@ -1,9 +1,10 @@
 /** Seeds a believable demo persona: Meera, 74, living alone in Thrissur. */
+import { setMedicationSchedule } from "./doses.js";
 import { db } from "./db.js";
 
 const RESET = process.argv.includes("--reset");
 if (RESET) {
-  for (const t of ["med_logs", "check_ins", "rhythm_events", "alerts", "medications"]) db.prepare(`DELETE FROM ${t}`).run();
+  for (const t of ["med_logs", "check_ins", "rhythm_events", "alerts", "medication_schedules", "medications"]) db.prepare(`DELETE FROM ${t}`).run();
 }
 
 const medCount = (db.prepare(`SELECT COUNT(*) n FROM medications`).get() as any).n;
@@ -17,7 +18,7 @@ const meds = [
 const insMed = db.prepare(`INSERT INTO medications (name, dosage, times) VALUES (?, ?, ?)`);
 for (const m of meds) insMed.run(m.name, m.dosage, JSON.stringify(m.times));
 
-const insLog = db.prepare(`INSERT INTO med_logs (medication_id, scheduled_for, status, logged_at, note) VALUES (?, ?, ?, ?, ?)`);
+const insLog = db.prepare(`INSERT INTO med_logs (medication_id, scheduled_for, status, logged_at, note, dose_key) VALUES (?, ?, ?, ?, ?, ?)`);
 const insEvent = db.prepare(`INSERT INTO rhythm_events (kind, happened_at, note) VALUES (?, ?, ?)`);
 const insCheck = db.prepare(`INSERT INTO check_ins (scheduled_for, completed_at, mood, sleep_quality, notes, conversation_summary) VALUES (?, ?, ?, ?, ?, ?)`);
 const medIds = (db.prepare(`SELECT id FROM medications ORDER BY id`).all() as any[]).map((r) => r.id);
@@ -27,6 +28,7 @@ const dt = (daysAgo: number, hhmm: string) => {
   const d = new Date(); d.setDate(d.getDate() - daysAgo);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmm}:00`;
 };
+for (const [i,id] of medIds.entries()) setMedicationSchedule(id,meds[i].times,dt(14,"00:00"));
 // Deterministic pseudo-random for a stable demo
 let s = 42;
 const rand = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
@@ -49,7 +51,7 @@ for (let ago = 14; ago >= 1; ago--) {
     const times = meds[i].times;
     for (const t of times) {
       const taken = rand() < 0.87;
-      insLog.run(id, dt(ago, t), taken ? "taken" : "missed", dt(ago, t), null);
+      insLog.run(id, dt(ago, t), taken ? "taken" : "missed", dt(ago, t), null, dt(ago,t));
     }
   }
   if (ago <= 7) {
@@ -61,6 +63,6 @@ for (let ago = 14; ago >= 1; ago--) {
 }
 insEvent.run("wake", dt(0, "06:47"), null);
 db.prepare(`INSERT INTO check_ins (scheduled_for) VALUES (?)`).run(dt(0, "09:30"));
-db.prepare(`INSERT INTO alerts (level, title, body) VALUES ('info', 'Tend is set up', 'Daily check-ins are scheduled for 09:30. Meera gets a gentle call each morning.')`).run();
+db.prepare(`INSERT INTO alerts (level, title, body) VALUES ('info', 'Tend is set up', 'Daily check-ins are scheduled for 09:30. The demo stores a daily check-in time; automatic calling is not implemented.')`).run();
 
 console.log("Seeded demo persona: 14 days of rhythm events, 3 medications with dose logs, 7 check-ins, today's schedule.");
