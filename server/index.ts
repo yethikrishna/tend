@@ -34,6 +34,6 @@ app.all("/mcp", async (req, res) => {
 
 app.get("/healthz", (_req, res) => res.json({ ok: true, service: "tend-mcp", spec: "2025-11-25", transport: "streamable-http" }));
 
-app.listen(PORT, () => {
+app.listen(PORT, "127.0.0.1", () => {
   console.log(`tend-mcp listening on http://127.0.0.1:${PORT}/mcp (MCP spec 2025-11-25, Streamable HTTP)`);
 });
