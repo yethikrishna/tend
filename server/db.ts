@@ -56,6 +56,27 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 `);
 
+// Existing free-form logs remain intact, but are not silently mapped to dose windows.
+const logColumns = db.prepare("PRAGMA table_info(med_logs)").all() as {name:string}[];
+if (!logColumns.some(c => c.name === "dose_key")) db.exec("ALTER TABLE med_logs ADD COLUMN dose_key TEXT");
+const alertColumns = db.prepare("PRAGMA table_info(alerts)").all() as {name:string}[];
+if (!alertColumns.some(c => c.name === "signal_key")) db.exec("ALTER TABLE alerts ADD COLUMN signal_key TEXT");
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS med_dose_unique ON med_logs(medication_id,dose_key) WHERE dose_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS alert_signal_unique ON alerts(signal_key) WHERE signal_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS medication_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  medication_id INTEGER NOT NULL REFERENCES medications(id),
+  times TEXT NOT NULL,
+  effective_from TEXT NOT NULL,
+  effective_until TEXT
+);
+`);
+// The current schedule is known only from this migration forward, never backdated.
+for (const med of db.prepare('SELECT id,times FROM medications WHERE id NOT IN (SELECT medication_id FROM medication_schedules)').all() as {id:number,times:string}[]) {
+  db.prepare('INSERT INTO medication_schedules(medication_id,times,effective_from) VALUES(?,?,?)').run(med.id,med.times,nowLocal());
+}
+
 export function nowLocal(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
