@@ -32,13 +32,13 @@ function render(d) {
 
   // meds
   $("meds").innerHTML = d.meds.map((m) => {
-    const doses = m.times.map((t, i) => `<span class="dose ${m.todayLogs[i] ?? ""}" title="${t}: ${m.todayLogs[i] ?? "pending"}"></span>`).join("");
+    const doses = m.times.map((t, i) => `<span class="dose ${m.todayLogs[i] ?? ""}" title="${t}: ${m.todayLogs[i] ?? "unknown"}"></span>`).join("");
     return `<div class="med-row">${ring(m.adherence7d.pct)}
       <div style="flex:1">
         <div class="med-name">${escapeHtml(m.name)} <span class="muted">${escapeHtml(m.dosage)}</span></div>
         <div class="muted">${m.times.join(" · ")} &nbsp; ${doses}</div>
       </div>
-      <div class="muted">${m.adherence7d.taken}/${m.adherence7d.total} doses</div>
+      <div class="muted">${m.adherence7d.taken}/${m.adherence7d.total} tracked due<br>${m.adherence7d.unreported} unreported${m.adherence7d.legacyUnmappedLogs ? `<br>${m.adherence7d.legacyUnmappedLogs} legacy/unmapped` : ""}</div>
     </div>`;
   }).join("") || `<div class="muted">No medications.</div>`;
 
