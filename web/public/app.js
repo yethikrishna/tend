@@ -78,7 +78,7 @@ async function send(text) {
     }
   }
   sendBtn.disabled = false;
-  setOrb("listening", "Tend is listening");
+  setOrb("listening", "Tend is ready for your text");
   inp.focus();
 }
 
